@@ -1,3 +1,4 @@
+# FilmSec
 
 import os
 import re
@@ -5,12 +6,19 @@ import random
 import json
 import urllib.request
 import urllib.parse
+import sqlite3
+import threading
+import time
+import io
+import gzip
+import base64
 import tkinter as tk
 from tkinter import messagebox, simpledialog, filedialog
 
 import ttkbootstrap as tb
 from ttkbootstrap.constants import *
 
+# Poster (afiş) için opsiyonel Pillow (JPEG yüklemek için gerekir)
 try:
     from PIL import Image, ImageTk
 except Exception:
@@ -20,6 +28,8 @@ except Exception:
 APP_NAME = "FilmSec"
 
 
+
+TMDB_API_KEY = "cff5f74900050a6f9acfe181d731a9c7"
 # ================================
 # PLATFORM + VERİ KLASÖRÜ
 # ================================
@@ -55,9 +65,10 @@ MOVIE_NOTES_FILE = os.path.join(DATA_DIR, "movie_notes.json")
 WATCH_DATES_FILE = os.path.join(DATA_DIR, "watch_dates.json")
 WATCH_HISTORY_FILE = os.path.join(DATA_DIR, "watch_history.json")
 SETTINGS_FILE = os.path.join(DATA_DIR, "settings.json")
+APP_DB_FILE = os.path.join(DATA_DIR, "filmsec.sqlite3")
 
-POSTERS_DIR = os.path.join(DATA_DIR, "posters")
-os.makedirs(POSTERS_DIR, exist_ok=True)
+
+POSTER_DB_FILE = os.path.join(DATA_DIR, "posters.sqlite3")
 
 
 # ================================
@@ -93,857 +104,323 @@ def normalize_movie(s: str) -> str:
     return re.sub(r"\s+", " ", s.strip()).lower()
 
 
+# default listeler (sqlite seed)
+DEFAULT_LIST_SEED_B64 = {
+    "adnan_dvd": "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",
+    "letterboxd_top": "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",
+    "random_picks": "H4sIAG8kf2kC/31TTW8aQQy98yt8DJcKKCkhNz4EqZJNEBBFVdWDYQ3rsjuzmo8k9B/ld/SP1Tuzo6Y5VHuyx/Z7fs+7LQhWhqzjI8HFoNf70u1saEQKLvrj8WW381RwXaItmsf+sNv5qhwZ66gs0fzN7al2rFVI9LqdrUzdGl+hgk2hX8Ksq5heGlQ5TH2OtaDCjZZRac7KsNVKxofEZ2HCezSsQyhcJsbwM8Zy4TktMSdYeyUtDcTV4ENu0BuOQ/GopVSwOqbKSclxy9G4DWx4ksE3hC7tv+Bj4WBW+l3IjOOkR+uFx8bbmvbOptrmZU41Gkd5EvOhzHf6HCJZaMbuDPoASx0LhMemZsNNw+QFY10/KCGaWguZVvKdKEDIGt+0N3CPFX1KKqzQoJUBIW7p3YjGFXJOKlXNf6I6anhU+wJZRXp9Qb/XMNNeOXOGgzYgbCGLXT1By1BCfL2GhZeCtcY8WdGgPOny0CzzhKVo4QyRS8Yttc4PzY1EbdqTkK0P6Iro1mgQk5sCX2yB6gRryqlq70iahq2gaE5wq4INDS25o/4AJuoojLLo4GXrb4bO8Ot7n+60yRuKAgprMd9eQ5NeCDUtqFy/f0zi/6dxTc4blR5uU5NsvPJlDQvef6S/FFkUZFzSe14bicXgNOgOq11USuCnuD+B0+Fh4QUvdF6J6BlVpFz4HXqtpCtGxdalY5pUZOSfUTAl9HJqLeSk+v0mF/7PgvxMtsF/aAyx6VxnEii9O5ftOcH3jBXDnH/xjz/DsApNLAQAAA==",
+}
+
+DEFAULTS_DB_FILE = os.path.join(DATA_DIR, "defaults.sqlite3")
+
+
+def _seed_decode(b64_text: str) -> list[str]:
+    data = gzip.decompress(base64.b64decode(b64_text.encode("ascii"))).decode("utf-8")
+    return [line.strip() for line in data.split("\n") if line.strip()]
+
+
+def init_defaults_db() -> None:
+    conn = sqlite3.connect(DEFAULTS_DB_FILE)
+    cur = conn.cursor()
+    cur.execute(
+        """CREATE TABLE IF NOT EXISTS default_movies (
+            list_id TEXT NOT NULL,
+            movie TEXT NOT NULL,
+            movie_key TEXT NOT NULL,
+            PRIMARY KEY (list_id, movie_key)
+        )"""
+    )
+    cur.execute("SELECT COUNT(*) FROM default_movies")
+    count = cur.fetchone()[0]
+    if count == 0:
+        for list_id, b64_text in DEFAULT_LIST_SEED_B64.items():
+            movies = _seed_decode(b64_text)
+            rows = [(list_id, m, normalize_movie(m)) for m in movies]
+            cur.executemany(
+                "INSERT OR IGNORE INTO default_movies (list_id, movie, movie_key) VALUES (?, ?, ?)",
+                rows,
+            )
+        conn.commit()
+    conn.close()
+
+
+def get_default_movies(list_id: str) -> list[str]:
+    conn = sqlite3.connect(DEFAULTS_DB_FILE)
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT movie FROM default_movies WHERE list_id=? ORDER BY movie_key ASC",
+        (list_id,),
+    )
+    rows = [r[0] for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
 # ================================
-# PUAN VE NOT YÖNETİMİ
+# PUAN / NOT / TARİH / GEÇMİŞ (SQLite)
 # ================================
+def _app_db_conn() -> sqlite3.Connection:
+    conn = sqlite3.connect(APP_DB_FILE)
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA synchronous=NORMAL;")
+    return conn
+
+
+def _init_app_db() -> None:
+    with _app_db_conn() as conn:
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS ratings (movie_key TEXT PRIMARY KEY, rating REAL NOT NULL)"
+        )
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS notes (movie_key TEXT PRIMARY KEY, note TEXT NOT NULL)"
+        )
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS watch_history (movie_key TEXT PRIMARY KEY, list_id TEXT NOT NULL)"
+        )
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS watch_dates (movie_key TEXT NOT NULL, date TEXT NOT NULL, added_at INTEGER NOT NULL, PRIMARY KEY(movie_key, date))"
+        )
+
+
+def _table_has_rows(conn: sqlite3.Connection, table: str) -> bool:
+    cur = conn.execute(f"SELECT 1 FROM {table} LIMIT 1")
+    return cur.fetchone() is not None
+
+
+def _migrate_legacy_json_to_db() -> None:
+    """Eski JSON dosyalarını (varsa) SQLite'a taşır. DB doluysa dokunmaz."""
+    _init_app_db()
+    with _app_db_conn() as conn:
+        if (
+            _table_has_rows(conn, "ratings")
+            or _table_has_rows(conn, "notes")
+            or _table_has_rows(conn, "watch_dates")
+            or _table_has_rows(conn, "watch_history")
+        ):
+            return
+
+        # ratings
+        if os.path.exists(MOVIE_RATINGS_FILE):
+            try:
+                with open(MOVIE_RATINGS_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    for k, v in data.items():
+                        try:
+                            rv = float(v)
+                            if rv > 0:
+                                conn.execute(
+                                    "INSERT OR REPLACE INTO ratings(movie_key, rating) VALUES(?,?)",
+                                    (k, rv),
+                                )
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+
+        # notes
+        if os.path.exists(MOVIE_NOTES_FILE):
+            try:
+                with open(MOVIE_NOTES_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    for k, v in data.items():
+                        if v is None:
+                            continue
+                        s = str(v).strip()
+                        if s:
+                            conn.execute(
+                                "INSERT OR REPLACE INTO notes(movie_key, note) VALUES(?,?)",
+                                (k, s),
+                            )
+            except Exception:
+                pass
+
+        # watch_dates
+        if os.path.exists(WATCH_DATES_FILE):
+            try:
+                with open(WATCH_DATES_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    now = int(time.time())
+                    for k, dates in data.items():
+                        if not isinstance(dates, list):
+                            continue
+                        t = now
+                        for d in dates:
+                            ds = str(d).strip()
+                            if ds:
+                                conn.execute(
+                                    "INSERT OR REPLACE INTO watch_dates(movie_key, date, added_at) VALUES(?,?,?)",
+                                    (k, ds, t),
+                                )
+                                t += 1
+            except Exception:
+                pass
+
+        # watch_history
+        if os.path.exists(WATCH_HISTORY_FILE):
+            try:
+                with open(WATCH_HISTORY_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    for k, v in data.items():
+                        if v is None:
+                            continue
+                        s = str(v).strip()
+                        if s:
+                            conn.execute(
+                                "INSERT OR REPLACE INTO watch_history(movie_key, list_id) VALUES(?,?)",
+                                (k, s),
+                            )
+            except Exception:
+                pass
+
+
 def load_ratings() -> dict:
-    """Film puanlarını yükle"""
-    if not os.path.exists(MOVIE_RATINGS_FILE):
-        return {}
-    try:
-        with open(MOVIE_RATINGS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
+    _migrate_legacy_json_to_db()
+    with _app_db_conn() as conn:
+        cur = conn.execute("SELECT movie_key, rating FROM ratings")
+        return {k: float(v) for (k, v) in cur.fetchall()}
 
 
 def save_ratings(ratings: dict) -> None:
-    """Film puanlarını kaydet"""
-    with open(MOVIE_RATINGS_FILE, "w", encoding="utf-8") as f:
-        json.dump(ratings, f, ensure_ascii=False, indent=2)
+    _init_app_db()
+    with _app_db_conn() as conn:
+        conn.execute("DELETE FROM ratings")
+        for k, v in (ratings or {}).items():
+            try:
+                rv = float(v)
+            except Exception:
+                continue
+            if rv > 0:
+                conn.execute(
+                    "INSERT OR REPLACE INTO ratings(movie_key, rating) VALUES(?,?)",
+                    (k, rv),
+                )
 
 
 def load_notes() -> dict:
-    """Film notlarını yükle"""
-    if not os.path.exists(MOVIE_NOTES_FILE):
-        return {}
-    try:
-        with open(MOVIE_NOTES_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
+    _migrate_legacy_json_to_db()
+    with _app_db_conn() as conn:
+        cur = conn.execute("SELECT movie_key, note FROM notes")
+        return {k: v for (k, v) in cur.fetchall()}
 
 
 def save_notes(notes: dict) -> None:
-    """Film notlarını kaydet"""
-    with open(MOVIE_NOTES_FILE, "w", encoding="utf-8") as f:
-        json.dump(notes, f, ensure_ascii=False, indent=2)
+    _init_app_db()
+    with _app_db_conn() as conn:
+        conn.execute("DELETE FROM notes")
+        for k, v in (notes or {}).items():
+            s = str(v).strip() if v is not None else ""
+            if s:
+                conn.execute(
+                    "INSERT OR REPLACE INTO notes(movie_key, note) VALUES(?,?)",
+                    (k, s),
+                )
 
 
 def load_watch_dates() -> dict:
-    """İzlenme tarihlerini yükle - format: {movie_key: [date1, date2, ...]}"""
-    if not os.path.exists(WATCH_DATES_FILE):
-        return {}
-    try:
-        with open(WATCH_DATES_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
+    _migrate_legacy_json_to_db()
+    with _app_db_conn() as conn:
+        cur = conn.execute(
+            "SELECT movie_key, date FROM watch_dates ORDER BY movie_key, added_at"
+        )
+        out: dict[str, list[str]] = {}
+        for k, d in cur.fetchall():
+            out.setdefault(k, []).append(d)
+        return out
 
 
 def save_watch_dates(dates: dict) -> None:
-    """İzlenme tarihlerini kaydet"""
-    with open(WATCH_DATES_FILE, "w", encoding="utf-8") as f:
-        json.dump(dates, f, ensure_ascii=False, indent=2)
+    _init_app_db()
+    with _app_db_conn() as conn:
+        conn.execute("DELETE FROM watch_dates")
+        now = int(time.time())
+        for k, lst in (dates or {}).items():
+            if not isinstance(lst, list):
+                continue
+            t = now
+            for d in lst:
+                ds = str(d).strip()
+                if ds:
+                    conn.execute(
+                        "INSERT OR REPLACE INTO watch_dates(movie_key, date, added_at) VALUES(?,?,?)",
+                        (k, ds, t),
+                    )
+                    t += 1
+            now = t + 1
 
 
 def add_watch_date(movie: str, dates: dict) -> dict:
-    """Filme yeni izlenme tarihi ekle"""
     from datetime import datetime
+
     movie_key = get_movie_key(movie)
     today = datetime.now().strftime("%d.%m.%Y")
-    
+
     if movie_key not in dates:
         dates[movie_key] = []
-    
     if today not in dates[movie_key]:
         dates[movie_key].append(today)
-    
     return dates
 
 
 def load_watch_history() -> dict:
-    """İzlenme geçmişini yükle - format: {movie_key: list_id}"""
-    if not os.path.exists(WATCH_HISTORY_FILE):
-        return {}
-    try:
-        with open(WATCH_HISTORY_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return {}
+    _migrate_legacy_json_to_db()
+    with _app_db_conn() as conn:
+        cur = conn.execute("SELECT movie_key, list_id FROM watch_history")
+        return {k: v for (k, v) in cur.fetchall()}
 
 
 def save_watch_history(history: dict) -> None:
-    """İzlenme geçmişini kaydet"""
-    with open(WATCH_HISTORY_FILE, "w", encoding="utf-8") as f:
-        json.dump(history, f, ensure_ascii=False, indent=2)
+    _init_app_db()
+    with _app_db_conn() as conn:
+        conn.execute("DELETE FROM watch_history")
+        for k, v in (history or {}).items():
+            s = str(v).strip() if v is not None else ""
+            if s:
+                conn.execute(
+                    "INSERT OR REPLACE INTO watch_history(movie_key, list_id) VALUES(?,?)",
+                    (k, s),
+                )
 
 
 def add_to_watch_history(movie: str, list_id: str, history: dict) -> dict:
-    """Filme hangi listeden eklendiğini kaydet"""
     movie_key = get_movie_key(movie)
     history[movie_key] = list_id
     return history
 
 
 def load_settings() -> dict:
-    """Ayarları yükle"""
     if not os.path.exists(SETTINGS_FILE):
-        return {"first_launch": True, "tmdb_api_key": ""}
+        return {"first_launch": True}
     try:
         with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception:
-        return {"first_launch": True, "tmdb_api_key": ""}
+        return {"first_launch": True}
 
 
 def save_settings(settings: dict) -> None:
-    """Ayarları kaydet"""
     with open(SETTINGS_FILE, "w", encoding="utf-8") as f:
         json.dump(settings, f, ensure_ascii=False, indent=2)
 
 
 def get_movie_key(movie: str) -> str:
-    """Film için benzersiz anahtar oluştur (büyük/küçük harf duyarsız)"""
     return normalize_movie(movie)
 
 
 # ================================
 # 1) Adnan'ın DVD listesi (TAM)
 # ================================
-DEFAULT_DVD_LIST = [
-    ".45 (2006)",
-    "11:14 (2003)",
-    "120 (2008)",
-    "1408 (2007)",
-    "15 Minutes (2001)",
-    "2001: A Space Odyssey (1968)",
-    "2010: The Year We Make Contact (1984)",
-    "30 Days of Night (2007)",
-    "3:10 to Yuma (2007)",
-    "50 First Dates (2004)",
-    "8½ (1963)",
-    "A Bronx Tale (1993)",
-    "A Dangerous Man (2009)",
-    "A Madonna in Laleli (1999)",
-    "A Romantic Comedy 2 (2013)",
-    "A Very Long Engagement (2004)",
-    "A.I. Artificial Intelligence (2001)",
-    "Ace Ventura: Pet Detective (1994)",
-    "Ace Ventura: When Nature Calls (1995)",
-    "Ali G Indahouse (2002)",
-    "Alice in Wonderland (2010)",
-    "Amadeus (1984)",
-    "American Beauty (1999)",
-    "American Gangster (2007)",
-    "American Outlaws (2001)",
-    "American Pie (1999)",
-    "American Pie 2 (2001)",
-    "American Pie Presents: Band Camp (2005)",
-    "American Pie Presents: Beta House (2007)",
-    "American Wedding (2003)",
-    "America's Sweethearts (2001)",
-    "Amistad (1997)",
-    "Analyze That (2002)",
-    "Analyze This (1999)",
-    "Anatomy (2000)",
-    "Angel Heart (1987)",
-    "Angels & Demons (2009)",
-    "Anna and the King (1999)",
-    "Apocalypto (2006)",
-    "Argo (2012)",
-    "Awake (2007)",
-    "Ballistic: Ecks vs. Sever (2002)",
-    "Barry Lyndon (1975)",
-    "Basic Instinct 2 (2006)",
-    "Battleship (2012)",
-    "Becoming Queen (2004)",
-    "Behind Enemy Lines (2001)",
-    "Being John Malkovich (1999)",
-    "Beyond Borders (2021)",
-    "Beyond the Clouds (1995)",
-    "Billy Elliot (2000)",
-    "Bitter Moon (1992)",
-    "Black Hawk Down (2001)",
-    "Blade (1998)",
-    "Blade II (2002)",
-    "Blade: Trinity (2004)",
-    "Blood Diamond (2006)",
-    "Blow (2001)",
-    "Blues Brothers 2000 (1998)",
-    "Boats Out of Watermelon Rinds (2004)",
-    "Body of Lies (2008)",
-    "Bonnie and Clyde (1967)",
-    "Born on the Fourth of July (1989)",
-    "Borrowed Bride (2005)",
-    "Bride & Prejudice (2004)",
-    "Bugsy (1991)",
-    "Bullitt (1968)",
-    "Captain Corelli's Mandolin (2001)",
-    "Casualties of War (1989)",
-    "Cat People (1982)",
-    "Chaos (2005)",
-    "Charlie's Angels (2000)",
-    "Cholera Street (1997)",
-    "City of God (2002)",
-    "Climates (2006)",
-    "Closer (2004)",
-    "Con Air (1997)",
-    "Conspiracy Theory (1997)",
-    "Cowboy (1958)",
-    "Cube (1997)",
-    "Cube 2: Hypercube (2002)",
-    "Curse of the Golden Flower (2006)",
-    "Dance with the Jackals (2010)",
-    "Dances with Wolves (1990)",
-    "Darkness (2002)",
-    "Death Race (2008)",
-    "Death Race 2 (2010)",
-    "Deception (2008)",
-    "Demolition Man (1993)",
-    "Derailed (2005)",
-    "Diamonds Are Forever (1971)",
-    "Die Another Day (2002)",
-    "Dirty Dancing (1987)",
-    "Dirty Harry (1971)",
-    "Distant (2002)",
-    "District B13 (2004)",
-    "Double Trouble (1984)",
-    "Driving Miss Daisy (1989)",
-    "Due Date (2010)",
-    "Dune (1984)",
-    "Elephants and Grass (2000)",
-    "Enemy at the Gates (2001)",
-    "Escape from New York (1981)",
-    "EuroTrip (2004)",
-    "Evan Almighty (2007)",
-    "Expat Şaban (1985)",
-    "Eye for an Eye (1996)",
-    "Face/Off (1997)",
-    "Fazıl Say - Fenerbahçe Senfonisi (2007)",
-    "Feeling Minnesota (1996)",
-    "Femme Fatale (2002)",
-    "Final Destination (2000)",
-    "Final Destination 2 (2003)",
-    "Final Destination 5 (2011)",
-    "Flags of Our Fathers (2006)",
-    "Flatliners (1990)",
-    "Flight (2012)",
-    "Flightplan (2005)",
-    "Flyboys (2006)",
-    "For Your Eyes Only (1981)",
-    "Fracture (2007)",
-    "Freddy vs. Jason (2003)",
-    "Friday the 13th (1980)",
-    "Friday the 13th Part III (1982)",
-    "Friday the 13th Part VI: Jason Lives (1986)",
-    "Fried Green Tomatoes (1991)",
-    "G.I. Joe: Retaliation (2013)",
-    "Gamer (2009)",
-    "Glory (1989)",
-    "God Send (2019)",
-    "Gods and Generals (2003)",
-    "GoldenEye (1995)",
-    "Gothika (2003)",
-    "Green Street Hooligans (2005)",
-    "Gremlins (1984)",
-    "Halloween: Resurrection (2002)",
-    "Head in the Clouds (2004)",
-    "Headhunters (2011)",
-    "Heartbreak Ridge (1986)",
-    "Heaven & Earth (1993)",
-    "Hero (2002)",
-    "He's Convict Now (2005)",
-    "He's Just Not That Into You (2009)",
-    "Hitman (2007)",
-    "Hollow Man (2000)",
-    "Hook (1991)",
-    "Hotel Rwanda (2004)",
-    "Hours (2013)",
-    "How to Lose a Guy in 10 Days (2003)",
-    "I Am Sam (2001)",
-    "In Time (2011)",
-    "Indecent Proposal (1993)",
-    "Indiana Jones and the Kingdom of the Crystal Skull (2008)",
-    "Insomnia (2002)",
-    "Internal Affairs (1990)",
-    "Interview with the Vampire (1994)",
-    "Into the Blue (2005)",
-    "Jack Frost (1998)",
-    "Jeepers Creepers (2001)",
-    "Jeepers Creepers 2 (2003)",
-    "Jerry Maguire (1996)",
-    "JFK (1991)",
-    "Jumanji (1995)",
-    "Jumper (2008)",
-    "K-19: The Widowmaker (2002)",
-    "K-PAX (2001)",
-    "Kill Bill: Vol. 2 (2004)",
-    "Killer Elite (2011)",
-    "Killing the Shadows (2006)",
-    "Kiss Kiss Bang Bang (2005)",
-    "Kutsal Damacana (2007)",
-    "L.A. Confidential (1997)",
-    "Last Man Standing (1996)",
-    "Law Abiding Citizen (2009)",
-    "Lawrence of Arabia (1962)",
-    "Leaving Las Vegas (1995)",
-    "Legends of the Fall (1994)",
-    "Les Misérables (1998)",
-    "Lethal Weapon 4 (1998)",
-    "Life Is a Miracle (2004)",
-    "Limitless (2011)",
-    "Little Buddha (1993)",
-    "Little Children (2006)",
-    "Little Fockers (2010)",
-    "Live and Let Die (1973)",
-    "Live Free or Die Hard (2007)",
-    "Lord of War (2005)",
-    "Lost Highway (1997)",
-    "Lovelorn (2005)",
-    "Lucky Number Slevin (2006)",
-    "Machete (2010)",
-    "Magic Carpet Ride (2005)",
-    "Man of Fire (2021)",
-    "Mary Reilly (1996)",
-    "Mary Shelley's Frankenstein (1994)",
-    "Mazi Kalbimde Yaradır (1970)",
-    "Me Myself & Irene (2000)",
-    "Meet the Fockers (2004)",
-    "Meet the Parents (2000)",
-    "Men in Black (1997)",
-    "Men in Black 3 (2012)",
-    "Men in Black II (2002)",
-    "Million Dollar Baby (2004)",
-    "Mindhunters (2004)",
-    "Minority Report (2002)",
-    "Mission: Impossible III (2006)",
-    "Mongol: The Rise of Genghis Khan (2007)",
-    "Moulin Rouge! (2001)",
-    "Mr. & Mrs. Smith (2005)",
-    "Murder by Numbers (2002)",
-    "My World (2013)",
-    "National Security (2003)",
-    "Night of the Living Dead (1968)",
-    "Noi the Albino (2003)",
-    "Octopussy (1983)",
-    "Old Dogs (2009)",
-    "Oldboy (2003)",
-    "One Missed Call (2003)",
-    "One Night at McCool's (2001)",
-    "Operation Pacific (1951)",
-    "Osama (2003)",
-    "Outland (1981)",
-    "P.S. I Love You (2007)",
-    "Panic Room (2002)",
-    "Pan's Labyrinth (2006)",
-    "Paranormal Activity (2007)",
-    "Patch Adams (1998)",
-    "Pathology (2008)",
-    "Paycheck (2003)",
-    "Pearl Harbor (2001)",
-    "Perfect Stranger (2007)",
-    "Pet Sematary II (1992)",
-    "Peter Pan (2003)",
-    "Planet Earth (2006)",
-    "Planet Terror (2007)",
-    "Platoon (1986)",
-    "Poison Ivy (1992)",
-    "Poltergeist (1982)",
-    "Premonition (2007)",
-    "Rambo (2008)",
-    "Recep Ivedik (2008)",
-    "Recep Ivedik 2 (2009)",
-    "Recep Ivedik 3 (2010)",
-    "Reservoir Dogs (1992)",
-    "Resident Evil: Apocalypse (2004)",
-    "Resident Evil: Extinction (2007)",
-    "Revolver (2005)",
-    "Rhapsody in August (1991)",
-    "Riddick (2013)",
-    "Rise of the Planet of the Apes (2011)",
-    "Road to Perdition (2002)",
-    "Road Trip (2000)",
-    "Robin Hood (2010)",
-    "Romeo + Juliet (1996)",
-    "Romeo Must Die (2000)",
-    "Rose Red (2002)",
-    "RRRrrrr!!! (2004)",
-    "Rumble Fish (1983)",
-    "Runaway Bride (1999)",
-    "Runaway Jury (2003)",
-    "Safe House (2012)",
-    "Salt (2010)",
-    "Saving Private Ryan (1998)",
-    "Saw II (2005)",
-    "Scary Movie 4 (2006)",
-    "Scream 4 (2011)",
-    "Seed of Chucky (2004)",
-    "Seven Pounds (2008)",
-    "Shallow Hal (2001)",
-    "Shaolin Soccer (2001)",
-    "Sherlock Holmes (2009)",
-    "Sherlock Holmes: A Game of Shadows (2011)",
-    "Shine (1996)",
-    "Shooter (2007)",
-    "Signs (2002)",
-    "Sin City (2005)",
-    "Sleepers (1996)",
-    "Sliding Doors (1998)",
-    "Slumdog Millionaire (2008)",
-    "Smokin' Aces (2006)",
-    "Sneakers (1992)",
-    "Something's Gotta Give (2003)",
-    "Sommersby (1993)",
-    "Source Code (2011)",
-    "Sphere (1998)",
-    "Spy Game (2001)",
-    "Stargate (1994)",
-    "Stealing Beauty (1996)",
-    "Stepmom (1998)",
-    "Stigmata (1999)",
-    "Sunshine (1999)",
-    "Taken (2008)",
-    "Taken 2 (2012)",
-    "Taking Lives (2004)",
-    "Takva: A Man's Fear of God (2006)",
-    "Taxi 2 (2000)",
-    "Taxi 3 (2003)",
-    "The 13th Warrior (1999)",
-    "The Alamo (2004)",
-    "The Animatrix (2003)",
-    "The Astronaut's Wife (1999)",
-    "The Avengers (1998)",
-    "The Aviator (2004)",
-    "The Barber of Siberia (1998)",
-    "The Beach (2000)",
-    "The Big Lebowski (1998)",
-    "The Book of Eli (2010)",
-    "The Break-Up (2006)",
-    "The Breath (2009)",
-    "The Bridge on the River Kwai (1957)",
-    "The Butterfly Effect (2004)",
-    "The Butterfly Effect 2 (2006)",
-    "The Cowboys (1972)",
-    "The Crimson Rivers (2000)",
-    "The Curious Case of Benjamin Button (2008)",
-    "The Da Vinci Code (2006)",
-    "The Deer Hunter (1978)",
-    "The Departed (2006)",
-    "The Exorcism of Emily Rose (2005)",
-    "The Expendables 2 (2012)",
-    "The Family Man (2000)",
-    "The Final Destination (2009)",
-    "The Forbidden Kingdom (2008)",
-    "The Fugitive (1993)",
-    "The Game (1997)",
-    "The Getaway (1972)",
-    "The Girl Who Kicked the Hornet's Nest (2009)",
-    "The Girl with the Dragon Tattoo (2011)",
-    "The Godfather Part III (1990)",
-    "The Green Mile (1999)",
-    "The Grudge (2004)",
-    "The Haunting (1999)",
-    "The Heir Apparent: Largo Winch (2008)",
-    "The Hitcher (2007)",
-    "The Hunger Games (2012)",
-    "The Hurt Locker (2008)",
-    "The Illusionist (2006)",
-    "The Incredible Hulk (2008)",
-    "The Jacket (2005)",
-    "The King's Speech (2010)",
-    "The Lake House (2006)",
-    "The League of Extraordinary Gentlemen (2003)",
-    "The Legend of Suriyothai (2001)",
-    "The Legend of Zorro (2005)",
-    "The Life of Mammals (2002)",
-    "The Magician (2006)",
-    "The Magnificent Seven (1960)",
-    "The Matrix (1999)",
-    "The Matrix Reloaded (2003)",
-    "The Matrix Revolutions (2003)",
-    "The Merchant of Venice (2004)",
-    "The Messenger: The Story of Joan of Arc (1999)",
-    "The Mexican (2001)",
-    "The Mists of Avalon (2001)",
-    "The Model Solution (2002)",
-    "The Next Three Days (2010)",
-    "The Notebook (2004)",
-    "The Omen (2006)",
-    "The Perfect Storm (2000)",
-    "The Portrait of a Lady (1996)",
-    "The Possession (2012)",
-    "The Postman (1997)",
-    "The Professionals (1966)",
-    "The Punisher (2004)",
-    "The Pursuit of Happyness (2006)",
-    "The Recruit (2003)",
-    "The Ring (2002)",
-    "The Ring Two (2005)",
-    "The Score (2001)",
-    "The Specialist (1994)",
-    "The Taking of Pelham 1 2 3 (2009)",
-    "The Texas Chain Saw Massacre (1974)",
-    "The Tourist (2010)",
-    "The Transporter (2002)",
-    "The Twilight Saga: New Moon (2009)",
-    "The Village (2004)",
-    "Thelma & Louise (1991)",
-    "Thir13en Ghosts (2001)",
-    "Thor (2011)",
-    "Three Colours: Red (1994)",
-    "Three Colours: White (1994)",
-    "Three Monkeys (2008)",
-    "Thunderball (1965)",
-    "Top Gun (1986)",
-    "Torque (2004)",
-    "Toss-Up (2004)",
-    "Traffic (2000)",
-    "Transformers: Dark of the Moon (2011)",
-    "True Grit (2010)",
-    "True Lies (1994)",
-    "Turks in Space (2006)",
-    "U Turn (1997)",
-    "Ultraviolet (2006)",
-    "Under Construction (2003)",
-    "Underground (1995)",
-    "Underworld (2003)",
-    "Underworld: Awakening (2012)",
-    "Underworld: Evolution (2006)",
-    "Unknown (2011)",
-    "Unleashed (2005)",
-    "Urban Legend (1998)",
-    "Urban Legends: Final Cut (2000)",
-    "Vali (2009)",
-    "Vanilla Sky (2001)",
-    "Vantage Point (2008)",
-    "Vertical Limit (2000)",
-    "Vidocq (2001)",
-    "Vizontele Tuuba (2004)",
-    "Wag the Dog (1997)",
-    "We Don't Live Here Anymore (2004)",
-    "We Were Soldiers (2002)",
-    "What Happened in Vegas (2017)",
-    "Windtalkers (2002)",
-    "Wrath of the Titans (2012)",
-    "X2 (2003)",
-    "xXx (2002)",
-    "Yahşi Batı (2009)",
-    "Yamakasi (2001)",
-    "You Got Served (2004)",
-    "You Me and Dupree (2006)",
-    "…And God Created Woman (1956)",
-]
 
 # ================================
 # 2) Letterboxd Top 250 listesi
 # ================================
-LETTERBOXD_TOP_LIST = [
-    "Harakiri (1962)",
-    "The Human Condition III: A Soldier's Prayer (1961)",
-    "12 Angry Men (1957)",
-    "Come and See (1985)",
-    "Seven Samurai (1954)",
-    "High and Low (1963)",
-    "The Godfather Part II (1974)",
-    "The Shawshank Redemption (1994)",
-    "The Human Condition I: No Greater Love (1959)",
-    "City of God (2002)",
-    "The Lord of the Rings: The Return of the King (2003)",
-    "Yi Yi (2000)",
-    "Schindler's List (1993)",
-    "Parasite (2019)",
-    "The Godfather (1972)",
-    "Ikiru (1952)",
-    "Ran (1985)",
-    "The Good, the Bad and the Ugly (1966)",
-    "La Haine (1995)",
-    "Le Trou (1960)",
-    "Cinema Paradiso (1988)",
-    "A Brighter Summer Day (1991)",
-    "Autumn Sonata (1978)",
-    "The Dark Knight (2008)",
-    "The Human Condition II: Road to Eternity (1959)",
-    "Grave of the Fireflies (1988)",
-    "Neon Genesis Evangelion: The End of Evangelion (1997)",
-    "Woman in the Dunes (1964)",
-    "There Will Be Blood (2007)",
-    "GoodFellas (1990)",
-    "The Battle of Algiers (1966)",
-    "The Cranes Are Flying (1957)",
-    "Paths of Glory (1957)",
-    "Spirited Away (2001)",
-    "Andrei Rublev (1966)",
-    "I Am Cuba (1964)",
-    "Incendies (2010)",
-    "Tokyo Story (1953)",
-    "Apocalypse Now (1979)",
-    "It's a Wonderful Life (1946)",
-    "The Apartment (1960)",
-    "Sunset Boulevard (1950)",
-    "Interstellar (2014)",
-    "The Ascent (1977)",
-    "The Passion of Joan of Arc (1928)",
-    "The Lord of the Rings: The Two Towers (2002)",
-    "Sansho the Bailiff (1954)",
-    "Fanny and Alexander (1982)",
-    "Whiplash (2014)",
-    "Mishima: A Life in Four Chapters (1985)",
-    "Portrait of a Lady on Fire (2019)",
-    "Memories of Murder (2003)",
-    "Close-Up (1990)",
-    "The Red Shoes (1948)",
-    "Red Beard (1965)",
-    "Nights of Cabiria (1957)",
-    "Spider-Man: Across the Spider-Verse (2023)",
-    "Nobody Knows (2004)",
-    "Barry Lyndon (1975)",
-    "Stalker (1979)",
-    "Witness for the Prosecution (1957)",
-    "The Pianist (2002)",
-    "Do the Right Thing (1989)",
-    "A Woman Under the Influence (1974)",
-    "Life Is Beautiful (1997)",
-    "The Empire Strikes Back (1980)",
-    "Lawrence of Arabia (1962)",
-    "Spider-Man: Into the Spider-Verse (2018)",
-    "Eternity and a Day (1998)",
-    "The Handmaiden (2016)",
-    "Persona (1966)",
-    "Princess Mononoke (1997)",
-    "Once Upon a Time in the West (1968)",
-    "Love Exposure (2008)",
-    "Farewell My Concubine (1993)",
-    "Perfect Blue (1997)",
-    "The Lord of the Rings: The Fellowship of the Ring (2001)",
-    "Satantango (1994)",
-    "Paper Moon (1973)",
-    "Scenes from a Marriage (1974)",
-    "In the Mood for Love (2000)",
-    "War and Peace (1967)",
-    "The Voice of Hind Rajab (2025)",
-    "An Elephant Sitting Still (2018)",
-    "Dune: Part Two (2024)",
-    "Where Is the Friend's House? (1987)",
-    "Paris, Texas (1984)",
-    "Sherlock Jr. (1924)",
-    "A Separation (2011)",
-    "Oldboy (2003)",
-    "Apur Sansar (1959)",
-    "Good Will Hunting (1997)",
-    "One Flew Over the Cuckoo's Nest (1975)",
-    "Rear Window (1954)",
-    "It's Such a Beautiful Day (2012)",
-    "Swing Girls (2004)",
-    "Se7en (1995)",
-    "Landscape in the Mist (1988)",
-    "All About Eve (1950)",
-    "Army of Shadows (1969)",
-    "Inglourious Basterds (2009)",
-    "The Wages of Fear (1953)",
-    "Z (1969)",
-    "Ordet (1955)",
-    "Central Station (1998)",
-    "Howl's Moving Castle (2004)",
-    "Chainsaw Man – The Movie: Reze Arc (2025)",
-    "Amadeus (1984)",
-    "The Thing (1982)",
-    "A Man Escaped (1956)",
-    "Judgment at Nuremberg (1961)",
-    "Singin' in the Rain (1952)",
-    "How to Make Millions Before Grandma Dies (2024)",
-    "All That Jazz (1979)",
-    "Still Walking (2008)",
-    "Raise the Red Lantern (1991)",
-    "Three Colours: Red (1994)",
-    "Late Spring (1949)",
-    "A Special Day (1977)",
-    "The Silence of the Lambs (1991)",
-    "I'm Still Here (2024)",
-    "Dead Poets Society (1989)",
-    "The Departed (2006)",
-    "To Be or Not to Be (1942)",
-    "Monster (2023)",
-    "Wild Strawberries (1957)",
-    "City Lights (1931)",
-    "The Seventh Seal (1957)",
-    "The Great Dictator (1940)",
-    "Funeral Parade of Roses (1969)",
-    "Brief Encounter (1945)",
-    "Mirror (1975)",
-    "Taste of Cherry (1997)",
-    "Das Boot (1981)",
-    "Django Unchained (2012)",
-    "Pather Panchali (1955)",
-    "The Young Girls of Rochefort (1967)",
-    "Prisoners (2013)",
-    "Rocco and His Brothers (1960)",
-    "Before Sunset (2004)",
-    "The Celebration (1998)",
-    "Mommy (2014)",
-    "Tampopo (1985)",
-    "The Best of Youth (2003)",
-    "Twin Peaks: Fire Walk with Me (1992)",
-    "No Country for Old Men (2007)",
-    "Underground (1995)",
-    "Psycho (1960)",
-    "Werckmeister Harmonies (2000)",
-    "Perfect Days (2023)",
-    "Wings of Desire (1987)",
-    "Dog Day Afternoon (1975)",
-    "The 400 Blows (1959)",
-    "Shoplifters (2018)",
-    "Sing Sing (2023)",
-    "Before Sunrise (1995)",
-    "Dr. Strangelove or: How I Learned to Stop Worrying and Love the Bomb (1964)",
-    "Yojimbo (1961)",
-    "Children of Men (2006)",
-    "Chinatown (1974)",
-    "Heat (1995)",
-    "M (1931)",
-    "Opening Night (1977)",
-    "Fantastic Mr. Fox (2009)",
-    "The Treasure of the Sierra Madre (1948)",
-    "The Cremator (1969)",
-    "The Sacrifice (1986)",
-    "Samurai Rebellion (1967)",
-    "The Elephant Man (1980)",
-    "Bicycle Thieves (1948)",
-    "Dersu Uzala (1975)",
-    "The Lives of Others (2006)",
-    "Children of Paradise (1945)",
-    "The Father (2020)",
-    "La Notte (1961)",
-    "Terminator 2: Judgment Day (1991)",
-    "Secrets & Lies (1996)",
-    "The Man Who Shot Liberty Valance (1962)",
-    "Evangelion: 3.0+1.0 Thrice Upon a Time (2021)",
-    "The Hunt (2012)",
-    "Nostalgia (1983)",
-    "Chungking Express (1994)",
-    "Puella Magi Madoka Magica the Movie Part III: Rebellion (2013)",
-    "Akira (1988)",
-    "Life, and Nothing More… (1992)",
-    "8½ (1963)",
-    "Azur & Asmar: The Princes' Quest (2006)",
-    "We All Loved Each Other So Much (1974)",
-    "Malcolm X (1992)",
-    "The Iron Giant (1999)",
-    "Ace in the Hole (1951)",
-    "Casablanca (1942)",
-    "Cure (1997)",
-    "Throne of Blood (1957)",
-    "The Prestige (2006)",
-    "The Green Mile (1999)",
-    "Some Like It Hot (1959)",
-    "Look Back (2024)",
-    "Who's Afraid of Virginia Woolf? (1966)",
-    "Fail Safe (1964)",
-    "Fight Club (1999)",
-    "La Dolce Vita (1960)",
-    "Ritual (2000)",
-    "Rififi (1955)",
-    "Jeanne Dielman, 23, quai du Commerce, 1080 Bruxelles (1975)",
-    "Ugetsu (1953)",
-    "Mary and Max (2009)",
-    "Song of the Sea (2014)",
-    "Sorcerer (1977)",
-    "A Matter of Life and Death (1946)",
-    "Network (1976)",
-    "Modern Times (1936)",
-    "Interstella 5555: The 5tory of the 5ecret 5tar 5ystem (2003)",
-    "Aparajito (1956)",
-    "Mulholland Drive (2001)",
-    "The Night of the Hunter (1955)",
-    "Double Indemnity (1944)",
-    "The Tale of The Princess Kaguya (2013)",
-    "Umberto D. (1952)",
-    "2001: A Space Odyssey (1968)",
-    "Everything Everywhere All at Once (2022)",
-    "Il Sorpasso (1962)",
-    "Winter Light (1963)",
-    "Alien (1979)",
-    "The Holdovers (2023)",
-    "Saving Private Ryan (1998)",
-    "The Face of Another (1966)",
-    "The First Slam Dunk (2022)",
-    "Kes (1969)",
-    "Metropolis (1927)",
-    "Anatomy of a Murder (1959)",
-    "Sweet Smell of Success (1957)",
-    "The Best Years of Our Lives (1946)",
-    "Tokyo Godfathers (2003)",
-    "The Bridge on the River Kwai (1957)",
-    "Marcel the Shell with Shoes On (2021)",
-    "The Third Man (1949)",
-    "The Grand Budapest Hotel (2014)",
-    "Pulp Fiction (1994)",
-    "4 Months, 3 Weeks and 2 Days (2007)",
-    "A Moment of Innocence (1996)",
-    "Eternal Sunshine of the Spotless Mind (2004)",
-    "Kwaidan (1964)",
-    "The Disappearance of Haruhi Suzumiya (2010)",
-    "Quo Vadis, Aida? (2020)",
-    "Macario (1960)",
-    "Son of the White Mare (1981)",
-    "Nayakan (1987)",
-    "Napoleon (1927)",
-    "The King of Comedy (1982)",
-]
 
 # ================================
 # 3) Rastgele Film Önerileri
 # ================================
-RANDOM_RECOMMENDATIONS = [
-    "The Prestige (2006)",
-    "Se7en (1995)",
-    "Whiplash (2014)",
-    "Interstellar (2014)",
-    "Inception (2010)",
-    "The Truman Show (1998)",
-    "The Grand Budapest Hotel (2014)",
-    "Prisoners (2013)",
-    "Sicario (2015)",
-    "Arrival (2016)",
-    "Blade Runner (1982)",
-    "Blade Runner 2049 (2017)",
-    "The Thing (1982)",
-    "Alien (1979)",
-    "Aliens (1986)",
-    "Heat (1995)",
-    "Fight Club (1999)",
-    "The Usual Suspects (1995)",
-    "The Departed (2006)",
-    "Oldboy (2003)",
-    "City of God (2002)",
-    "Spirited Away (2001)",
-    "Princess Mononoke (1997)",
-    "Your Name. (2016)",
-    "Parasite (2019)",
-    "The Handmaiden (2016)",
-    "Django Unchained (2012)",
-    "No Country for Old Men (2007)",
-    "Mad Max: Fury Road (2015)",
-    "The Wolf of Wall Street (2013)",
-    "Goodfellas (1990)",
-    "The Godfather (1972)",
-    "The Shawshank Redemption (1994)",
-    "The Dark Knight (2008)",
-    "12 Angry Men (1957)",
-    "The Matrix (1999)",
-    "The Lord of the Rings: The Fellowship of the Ring (2001)",
-    "The Lord of the Rings: The Return of the King (2003)",
-    "Pulp Fiction (1994)",
-    "The Green Mile (1999)",
-    "The Silence of the Lambs (1991)",
-    "Back to the Future (1985)",
-    "Memento (2000)",
-    "The Pianist (2002)",
-    "American Beauty (1999)",
-    "Amélie (2001)",
-    "The Lives of Others (2006)",
-    "Chernobyl (2019) [Mini Dizi]",
-]
 
 
 # ================================
@@ -982,17 +459,17 @@ def ensure_builtin_lists(meta: dict) -> None:
     # Adnan'ın DVD listesi
     dvd_path = list_file_path("adnan_dvd", meta)
     if not os.path.exists(dvd_path) or not read_file(dvd_path):
-        write_file(dvd_path, DEFAULT_DVD_LIST)
+        write_file(dvd_path, get_default_movies('adnan_dvd'))
 
     # Letterboxd önerileri
     letterboxd_path = list_file_path("letterboxd_top", meta)
     if not os.path.exists(letterboxd_path) or not read_file(letterboxd_path):
-        write_file(letterboxd_path, LETTERBOXD_TOP_LIST)
+        write_file(letterboxd_path, get_default_movies('letterboxd_top'))
 
     # Rastgele film önerileri
     random_path = list_file_path("random_picks", meta)
     if not os.path.exists(random_path) or not read_file(random_path):
-        write_file(random_path, RANDOM_RECOMMENDATIONS)
+        write_file(random_path, get_default_movies('random_picks'))
 
 
 def remove_movie_from_all_lists(meta: dict, movie: str) -> None:
@@ -1014,6 +491,7 @@ class FilmSecApp(tb.Window):
         self.current_theme = "darkly"
 
         self.meta = load_lists_meta()
+        init_defaults_db()
         ensure_builtin_lists(self.meta)
 
         # Puan ve notları yükle
@@ -1073,6 +551,7 @@ class FilmSecApp(tb.Window):
         self.splitter.add(pool_container, weight=1)
         self.splitter.add(watched_container, weight=1)
 
+        # Aşağıdaki eski değişken adıyla devam edilsin
         watched_card = self.watched_card
 
         # --- Liste seçim barı ---
@@ -1101,13 +580,14 @@ class FilmSecApp(tb.Window):
         tb.Button(bar, text="➕", bootstyle="success-outline", command=self.add_new_list, width=3).pack(side=LEFT, padx=(0, 5))
         tb.Button(bar, text="🗑", bootstyle="danger-outline", command=self.remove_current_list, width=3).pack(side=LEFT, padx=(0, 10))
 
-        tb.Button(bar, text="✨ Yenilikler", bootstyle="secondary-outline", command=self.show_whats_new, width=12).pack(side=RIGHT, padx=(0, 8))
         tb.Button(bar, text="❓ Yardım", bootstyle="secondary-outline", command=self.show_help, width=10).pack(side=RIGHT)
 
-        # --- Listbox + scrollbar (seçili listenin içi) ---
-        pool_wrap = tb.Frame(self.pool_card)
-        pool_wrap.pack(fill=BOTH, expand=True)
+        # --- Liste + (sağında) Afiş önizleme (ayarlanabilir) ---
+        self.pool_pane = tb.Panedwindow(self.pool_card, orient=HORIZONTAL)
+        self.pool_pane.pack(fill=BOTH, expand=True)
 
+        # Sol: film listesi
+        pool_wrap = tb.Frame(self.pool_pane)
         pool_scroll = tb.Scrollbar(pool_wrap, orient=VERTICAL)
         pool_scroll.pack(side=RIGHT, fill=Y)
 
@@ -1121,6 +601,50 @@ class FilmSecApp(tb.Window):
         self.pool_list.pack(side=LEFT, fill=BOTH, expand=True)
         self.pool_list.config(yscrollcommand=pool_scroll.set)
         pool_scroll.config(command=self.pool_list.yview)
+
+        # Sağ: afiş alanı
+        poster_wrap = tb.Frame(self.pool_pane)
+        poster_card = tb.Labelframe(poster_wrap, text="Afiş", padding=10, bootstyle="secondary")
+        poster_card.pack(fill=BOTH, expand=True)
+
+        self.poster_title_var = tk.StringVar(value="")
+        tb.Label(
+            poster_card,
+            textvariable=self.poster_title_var,
+            font=("Segoe UI", 9, "bold"),
+            wraplength=240,
+            justify=LEFT,
+        ).pack(anchor=W, pady=(0, 6))
+
+        self.poster_img_label = tb.Label(
+            poster_card,
+            text="🎬 Bir film seç",
+            bootstyle="secondary",
+            anchor=CENTER,
+            padding=6,
+        )
+        self.poster_img_label.pack(fill=BOTH, expand=True)
+
+        self.poster_preview_win = None
+        self.poster_preview_imgtk = None
+        self.poster_img_label.bind("<ButtonPress-1>", self._poster_hold_start)
+        self.poster_img_label.bind("<ButtonRelease-1>", self._poster_hold_end)
+        self.poster_img_label.bind("<B1-Motion>", self._poster_hold_move)
+        self.poster_img_label.bind("<Leave>", self._poster_hold_end)
+
+        self.poster_photo = None
+        self.current_poster_path = None
+
+        tb.Label(
+            poster_card,
+            text="Afişi büyütmek için basılı tut",
+            bootstyle="secondary",
+            font=("Segoe UI", 9),
+        ).pack(fill=X, pady=(8, 0))
+
+        # Panedwindow'a ekle (başlangıçta dengeli)
+        self.pool_pane.add(pool_wrap, weight=3)
+        self.pool_pane.add(poster_wrap, weight=2)
 
         # --- İzlenen listbox + scrollbar ---
         watched_wrap = tb.Frame(watched_card)
@@ -1152,60 +676,33 @@ class FilmSecApp(tb.Window):
         self.info.pack(fill=X, pady=(12, 0))
 
         # ---------- SAĞ PANEL ----------
-                # ---------- POSTER (AFİŞ) ----------
-        self.poster_card = tb.Labelframe(right, text="Afiş", padding=10, bootstyle="secondary")
-        self.poster_card.pack(fill=X, pady=(0, 10))
+                
+        panel = tb.Labelframe(right, text="Kontroller", padding=12, bootstyle="secondary")
+        panel.pack(fill=Y, expand=True)
 
-        self.poster_title_var = tk.StringVar(value="")
-        tb.Label(
-            self.poster_card,
-            textvariable=self.poster_title_var,
-            font=("Segoe UI", 9, "bold"),
-            wraplength=260,
-            justify=LEFT,
-        ).pack(anchor=W, pady=(0, 6))
+        btn = {"width": 26, "padding": (8, 6)}
 
-        # Görsel alan 
-        self.poster_img_label = tb.Label(
-            self.poster_card,
-            text="🎬 Bir film seç",
-            bootstyle="secondary",
-            anchor=CENTER,
-            padding=6,
-        )
-        self.poster_img_label.pack(fill=X)
-        self.poster_photo = None  
+        btn_wrap = tb.Frame(panel)
+        btn_wrap.pack(fill=BOTH, expand=True)
 
-        tb.Button(
-            self.poster_card,
-            text="🔑 TMDb",
-            bootstyle="secondary-outline",
-            command=self.set_tmdb_key,
-            width=10,
-        ).pack(anchor=E, pady=(8, 0))
+        tb.Button(btn_wrap, text="🎲 Rastgele Seç", command=self.pick_movie_popup, bootstyle="success", **btn).pack(fill=X, pady=(0, 6))
+        tb.Button(btn_wrap, text="➕ Film Ekle", command=self.add_movie, bootstyle="primary", **btn).pack(fill=X, pady=(0, 6))
+        tb.Button(btn_wrap, text="🔍 Film Ara", command=self.search_movie, bootstyle="info", **btn).pack(fill=X, pady=(0, 6))
+        tb.Button(btn_wrap, text="↔ Liste ⇄ İzlenenlere Taşı", command=self.toggle_move_selected, bootstyle="warning", **btn).pack(fill=X, pady=(0, 6))
+        tb.Button(btn_wrap, text="🗑 Seçileni Kaldır", command=self.delete_selected_anywhere, bootstyle="danger", **btn).pack(fill=X, pady=(0, 6))
+        tb.Button(btn_wrap, text="📂 Veri Klasörünü Aç", command=self.open_data_dir, bootstyle="secondary", **btn).pack(fill=X, pady=(0, 6))
+        tb.Button(btn_wrap, text="🌓 Mod Değiştir (Light/Dark)", command=self.toggle_theme, bootstyle="secondary", **btn).pack(fill=X)
 
-        panel = tb.Labelframe(right, text="Kontroller", padding=14, bootstyle="secondary")
-        panel.pack(fill=Y)
-
-        btn = {"width": 26, "padding": (10, 10)}
-
-        tb.Button(panel, text="🎲 Rastgele Seç", command=self.pick_movie_popup, bootstyle="success", **btn).pack(fill=X, pady=(0, 10))
-        tb.Button(panel, text="➕ Film Ekle", command=self.add_movie, bootstyle="primary", **btn).pack(fill=X, pady=(0, 10))
-        tb.Button(panel, text="🔍 Film Ara", command=self.search_movie, bootstyle="info", **btn).pack(fill=X, pady=(0, 10))
-        tb.Button(panel, text="↔ Liste ⇄ İzlenenlere Taşı", command=self.toggle_move_selected, bootstyle="warning", **btn).pack(fill=X, pady=(0, 10))
-        tb.Button(panel, text="🗑 Seçileni Kaldır", command=self.delete_selected_anywhere, bootstyle="danger", **btn).pack(fill=X, pady=(0, 10))
-        tb.Button(panel, text="📂 Veri Klasörünü Aç", command=self.open_data_dir, bootstyle="secondary", **btn).pack(fill=X, pady=(0, 10))
-        tb.Button(panel, text="🌓 Mod Değiştir (Light/Dark)", command=self.toggle_theme, bootstyle="secondary", **btn).pack(fill=X, pady=(0, 10))
-        tb.Button(panel, text="❌ Çıkış", command=self.destroy, bootstyle="secondary-outline", **btn).pack(fill=X, pady=(6, 0))
-
-        # ---------- EVENTLAR ----------
+        # Çıkış butonu her zaman altta görünsün
+        tb.Button(panel, text="❌ Çıkış", command=self.destroy, bootstyle="secondary-outline", **btn).pack(side=BOTTOM, fill=X, pady=(10, 0))
+# ---------- EVENTLER ----------
         self.pool_list.bind("<<ListboxSelect>>", lambda e: self._on_select("pool"))
         self.watched_list.bind("<<ListboxSelect>>", lambda e: self._on_select("watched"))
 
         self.pool_list.bind("<Double-Button-1>", lambda e: self._on_double_click("pool"))
         self.watched_list.bind("<Double-Button-1>", lambda e: self._on_double_click("watched"))
 
-        # Sürükle-bırak eventları
+        # Sürükle-bırak eventleri
         self.pool_list.bind("<ButtonPress-1>", lambda e: self._on_drag_start(e, "pool"))
         self.pool_list.bind("<B1-Motion>", self._on_drag_motion)
         self.pool_list.bind("<ButtonRelease-1>", lambda e: self._on_drag_drop(e, "pool"))
@@ -1216,17 +713,28 @@ class FilmSecApp(tb.Window):
         
         self.drag_data = {"item": None, "source": None, "x": 0, "y": 0}
         
+        # Sürükleme görseli için label
         self.drag_label = None
 
         self.apply_listbox_theme()
         self.refresh_lists()
 
+        self.poster_mem_cache = {}
+        self.poster_prefetch_gen = 0
+        self.poster_prefetching = False
+        self.current_poster_bytes = None
+        self._poster_db_init()
+        self._start_poster_prefetch_for_current_list()
+
+
+        # Başlangıçta ayırıcıyı makul bir oranla konumlandır (Liste biraz daha geniş)
         try:
             self.after(150, lambda: self.splitter.sashpos(0, int(self.winfo_width() * 0.5)))
         except Exception:
             pass
 
         
+        # İlk açılış popup'ı kaldırıldı: bunun yerine küçük bir ipucu göster
         if self.settings.get("first_launch", True):
             self.settings["first_launch"] = False
             save_settings(self.settings)
@@ -1239,153 +747,48 @@ class FilmSecApp(tb.Window):
     # ================================
     def show_help(self):
         text = (
-            "🎬 Film Seçici - Kısa Kullanım\n\n"
-            "• Üstteki listeden hangi film listesini görmek istediğini seç.\n"
+            "🎬 FilmSec - Kısa Kullanım\n\n"
+            "• Üstteki menüden hangi film listesini görmek istediğini seç.\n"
             "• 🎲 Rastgele Seç: Bir film önerir. 'Evet' dersen izlenenlere taşır ve tüm listelerden düşer.\n"
-            "• ➕ Film Ekle: Film adını yazarsın, hangi listeye eklemek istediğini sorar.\n"
-            "• 🔍 Film Ara: Havuzda (seçili listede) veya izlenenlerde arar.\n"
-            "• ↔ Taşı: Seçili filmi liste ile izlenenler arasında taşır.\n"
-            "• 🗑 Kaldır: Seçili filmi bulunduğu yerden tamamen siler.\n\n"
-            "⭐ YENİ ÖZELLİK - Puan ve Not:\n"
-            "• Herhangi bir filme ÇIFT TIKLA!\n"
-            "• Açılan pencereden 0-10 arası puan verebilirsin\n"
-            "• İstersen notlar ekleyebilirsin\n"
-            "• Puanlar film adının yanında ⭐ ile görünür\n"
-            "• Notlu filmler 📝 işareti ile gösterilir\n\n"
-            "3 Film Listesi:\n"
-            "- Adnan'ın DVD Listesi: Kişisel DVD koleksiyonu\n"
-            "- Letterboxd Önerileri: Letterboxd'dan seçilmiş filmler\n"
-            "- Rastgele Film Önerileri: Çeşitli öneriler"
+            "• ➕ Film Ekle: Film adını yaz, hangi listeye ekleneceğini seç.\n"
+            "• 🔍 Film Ara: Seçili listede veya izlenenlerde arar.\n"
+            "• ↔ Taşı: Seçili filmi Liste ⇄ İzlenenler arasında taşır.\n"
+            "• 🗑 Kaldır: Seçili filmi bulunduğu yerden siler.\n\n"
+            "⭐ Puan & Not\n"
+            "• Filme çift tıkla: Puan (0-10) ve not penceresi açılır.\n"
+            "• Puanlar 0.5 adım: 0, 0.5, 1, 1.5 ... 10\n"
+            "• Yıldızlara tıklayarak da puan verebilirsin.\n\n"
+            "🖼️ Afişler (TMDb)\n"
+            "• Film seçince afiş otomatik bulunur (TMDb).\n"
+            "• Afişin üstüne sol tık basılı tutarak büyük önizleme görebilirsin.\n\n"
+
+            "↔ Ayarlanabilir Paneller\\n"
+            "• Liste ve İzlenenler arasındaki çizgiyi sürükleyerek genişlikleri ayarlayabilirsin.\n\n"
+            "Listeler:\n"
+            "- Adnan'ın DVD Listesi\n"
+            "- Letterboxd Önerileri\n"
+            "- Rastgele Film Önerileri\n"
         )
         messagebox.showinfo("Yardım", text)
 
-    
-    def show_whats_new(self):
-        """Yeni özellikler penceresini aç (kullanıcı isterse)."""
-        win = tb.Toplevel(self)
-        win.title("✨ Yenilikler")
-        win.geometry("520x420")
-        win.minsize(480, 360)
-        win.transient(self)
-
-        header = tb.Frame(win, bootstyle="primary", padding=18)
-        header.pack(fill=X)
-        tb.Label(
-            header,
-            text="✨ Yeni Özellikler",
-            font=("Segoe UI", 14, "bold"),
-            bootstyle="inverse-primary",
-        ).pack()
-
-        content = tb.Frame(win, padding=18)
-        content.pack(fill=BOTH, expand=True)
-
-        info_text = (
-            "⭐ Puan & Not Sistemi\n"
-            "• Herhangi bir filme ÇİFT TIKLA\n"
-            "• 0-10 arası puan ver\n"
-            "• Not ekle, düşüncelerini kaydet\n\n"
-            "🖱️ Daha Kolay Puanlama\n"
-            "• Yıldızlara tıklayarak da puan verebilirsin\n"
-            "• Puanlar 0.5 adım ile artar (3.5 gibi)\n\n"
-            "📌 Diğer\n"
-            "• İzlenenlere atılan film tüm listelerden düşer\n"
-            "• Sürükle-bırak ile taşıma desteklenir"
-        )
-
-        tb.Label(
-            content,
-            text=info_text,
-            font=("Segoe UI", 10),
-            justify=LEFT,
-            wraplength=470,
-        ).pack(anchor=W)
-
-        btn_frame = tb.Frame(win, padding=(18, 12))
-        btn_frame.pack(fill=X)
-
-        tb.Button(btn_frame, text="Kapat", bootstyle="secondary", command=win.destroy, width=12).pack(side=RIGHT)
-    def show_first_launch_info(self):
-            """İlk açılışta yeni özellikler hakkında bilgi göster"""
-            info_win = tb.Toplevel(self)
-            info_win.title("🎉 Yeni Özellikler!")
-            info_win.geometry("500x400")
-            info_win.transient(self)
-            info_win.grab_set()
-
-            # İkon ve başlık
-            header = tb.Frame(info_win, bootstyle="primary", padding=20)
-            header.pack(fill=X)
-
-            tb.Label(
-                header,
-                text="🎉 FilmSec'e Hoş Geldiniz!",
-                font=("Segoe UI", 16, "bold"),
-                bootstyle="inverse-primary"
-            ).pack()
-
-            # İçerik
-            content = tb.Frame(info_win, padding=20)
-            content.pack(fill=BOTH, expand=True)
-
-            info_text = (
-                "Artık filmlerinize puan ve not ekleyebilirsiniz!\n\n"
-                "⭐ PUAN VERMEk:\n"
-                "• Herhangi bir filme ÇIFT TIKLAYIN\n"
-                "• 0-10 arası puan verin\n"
-                "• Puanlar film adının yanında görünür\n\n"
-                "📝 NOT EKLEMEK:\n"
-                "• Aynı pencerede notunuzu yazın\n"
-                "• Düşüncelerinizi, izleme tarihini vs. ekleyin\n"
-                "• Notlu filmler 📝 işareti ile gösterilir\n\n"
-                "💡 İPUCU:\n"
-                "Hem havuz listelerinde hem de izlenenlerde\n"
-                "tüm filmlere puan ve not ekleyebilirsiniz!"
-            )
-
-            tb.Label(
-                content,
-                text=info_text,
-                font=("Segoe UI", 10),
-                justify=LEFT,
-                wraplength=450
-            ).pack(pady=10)
-
-            # Checkbox - bir daha gösterme
-            self.dont_show_var = tk.BooleanVar(value=False)
-            tb.Checkbutton(
-                content,
-                text="Bu mesajı bir daha gösterme",
-                variable=self.dont_show_var,
-                bootstyle="primary-round-toggle"
-            ).pack(pady=10)
-
-            # Butonlar
-            btn_frame = tb.Frame(info_win, padding=10)
-            btn_frame.pack(fill=X)
-
-            def close_info():
-                if self.dont_show_var.get():
-                    self.settings["first_launch"] = False
-                    save_settings(self.settings)
-                info_win.destroy()
-                # İlk 5 saniye ipucu göster
-                self._set_info("💡 İpucu: Filmlere puan ve not vermek için çift tıklayın!", "info")
-                self.after(5000, lambda: self._set_info("Hazır. Bir işlem seç 🙂", "secondary"))
-
-            tb.Button(
-                btn_frame,
-                text="Anladım, Başlayalım! 🚀",
-                bootstyle="success",
-                command=close_info,
-                width=30
-            ).pack()
-
-    # ================================
-    # UI yardımcıları
-    # ================================
     def _set_info(self, text: str, style: str = "secondary"):
         self.info.configure(text=text, bootstyle=style)
+
+
+    def _center_window(self, win: tk.Toplevel):
+        """Pencereyi ekranın ortasına al."""
+        try:
+            win.update_idletasks()
+            w = win.winfo_width() or win.winfo_reqwidth()
+            h = win.winfo_height() or win.winfo_reqheight()
+            sw = win.winfo_screenwidth()
+            sh = win.winfo_screenheight()
+            x = max(0, int((sw - w) / 2))
+            y = max(0, int((sh - h) / 2))
+            win.geometry(f"{w}x{h}+{x}+{y}")
+        except Exception:
+            pass
+
 
     def current_list_id(self) -> str:
         name = self.selected_list_var.get().strip()
@@ -1446,6 +849,7 @@ class FilmSecApp(tb.Window):
         self.meta["selected"] = self.current_list_id()
         save_lists_meta(self.meta)
         self.refresh_lists()
+        self._start_poster_prefetch_for_current_list()
         self._set_info(f"📁 Liste seçildi: {self.selected_list_var.get()}", "info")
 
     # ================================
@@ -1576,6 +980,7 @@ class FilmSecApp(tb.Window):
                 self.refresh_lists()
                 self._set_info(f"↩ '{original_movie}' seçili listeye geri eklendi", "info")
         
+        # Drag data'yı temizle
         self.drag_data = {"item": None, "source": None, "x": 0, "y": 0}
 
     def _on_select(self, which: str):
@@ -1636,6 +1041,7 @@ class FilmSecApp(tb.Window):
         Bu fonksiyon her durumda saf film adını döndürür.
         """
         clean = display_text
+        # Sıralama önemli değil; hangi ek önce geldiyse oradan kırp.
         for marker in (" ⭐", " 📅", " 📝"):
             if marker in clean:
                 clean = clean.split(marker)[0]
@@ -1654,6 +1060,7 @@ class FilmSecApp(tb.Window):
         popup.minsize(620, 560)
         popup.transient(self)
         popup.grab_set()
+        self._center_window(popup)
 
         # Başlık
         header = tb.Frame(popup, bootstyle="info", padding=15)
@@ -1675,6 +1082,7 @@ class FilmSecApp(tb.Window):
         rating_frame.pack(fill=X, pady=(0, 15))
 
         current_rating = self.ratings.get(movie_key, 0.0)
+        # Eski kayıtlarda 0.5 dışı değerler olabilir; burada 0.5'e sabitle
         try:
             current_rating = round(float(current_rating) * 2) / 2
         except Exception:
@@ -1689,10 +1097,12 @@ class FilmSecApp(tb.Window):
                 v = float(val)
             except Exception:
                 v = 0.0
+            # 0.5 adım
             return round(v * 2) / 2
 
         def update_rating_label(val):
             snapped = snap_to_half(val)
+            # ttk Scale bazen ara değerler üretir; burada 0.5'e kilitle
             if abs(rating_var.get() - snapped) > 1e-9:
                 rating_var.set(snapped)
             rating_label_var.set(f"{snapped:.1f}")
@@ -1735,10 +1145,10 @@ class FilmSecApp(tb.Window):
             half_star = 1 if (val - full_stars) >= 0.5 else 0
             empty_stars = 10 - full_stars - half_star
         
-            # Puan sembolleri
+            # Daha net görünüm: dolu ★, yarım ⯨, boş ☆
             stars = "★" * full_stars
             if half_star:
-                stars += "⯨"  
+                stars += "⯨"  # yarım yıldız
             stars += "☆" * empty_stars
         
             stars_label.config(text=stars)
@@ -1797,6 +1207,33 @@ class FilmSecApp(tb.Window):
         btn_frame = tb.Frame(popup, padding=10)
         btn_frame.pack(fill=X)
 
+        def move_to_watched():
+            watched = read_file(WATCHED_FILE)
+            if contains_ci(watched, movie):
+                self._set_info(f"ℹ️ '{movie}' zaten izlenenlerde.", "info")
+                popup.destroy()
+                self.refresh_lists()
+                return
+
+            watched.append(movie)
+            write_file(WATCHED_FILE, watched)
+
+            # İzlenme tarihini kaydet
+            self.watch_dates = add_watch_date(movie, self.watch_dates)
+            save_watch_dates(self.watch_dates)
+
+            # Hangi listeden eklendiğini kaydet
+            current_list_id = self.current_list_id()
+            self.watch_history = add_to_watch_history(movie, current_list_id, self.watch_history)
+            save_watch_history(self.watch_history)
+
+            remove_movie_from_all_lists(self.meta, movie)
+
+            popup.destroy()
+            self.refresh_lists()
+            self._set_info(f"✅ '{movie}' izlenenlere taşındı", "success")
+
+
         def save_data():
             # Puanı kaydet
             new_rating = snap_to_half(rating_var.get())
@@ -1837,6 +1274,14 @@ class FilmSecApp(tb.Window):
                 popup.destroy()
                 self.refresh_lists()
                 self._set_info(f"🗑 '{movie}' için tüm veriler silindi", "warning")
+
+        tb.Button(
+            btn_frame,
+            text="✅ İzlenenlere Taşı",
+            bootstyle="warning",
+            command=move_to_watched,
+            width=18
+        ).pack(side=LEFT, padx=5)
 
         tb.Button(
             btn_frame,
@@ -2112,7 +1557,7 @@ class FilmSecApp(tb.Window):
             original_movie = self._extract_original_movie_name(movie)
             movie_key = get_movie_key(original_movie)
 
-            # Bu film izlenenlere hangi listeden eklenmişti kontrolünü yap
+            # Bu film izlenenlere hangi listeden eklenmişti?
             target_list_id = self.watch_history.get(movie_key)
 
             # İzlenenlerden kaldır (büyük/küçük harf ve boşluk duyarsız)
@@ -2411,16 +1856,16 @@ class FilmSecApp(tb.Window):
                 messagebox.showerror("Hata", f"Liste dosyası silinirken hata oluştu:\n{e}")
                 return
 
-        
+        # Metadata'dan kaldır
         self.meta["lists"] = [it for it in self.meta["lists"] if it["id"] != current_id]
         
-        
+        # İlk listeyi seç
         if self.meta["lists"]:
             self.meta["selected"] = self.meta["lists"][0]["id"]
         
         save_lists_meta(self.meta)
 
-       
+        # UI'ı güncelle
         self.list_names = [it["name"] for it in self.meta["lists"]]
         self.list_id_by_name = {it["name"]: it["id"] for it in self.meta["lists"]}
         self.list_combo.configure(values=self.list_names)
@@ -2548,32 +1993,49 @@ class FilmSecApp(tb.Window):
 
     
     # ================================
-    # Poster (Afiş) - TMDb 
+    # Poster (Afiş) - TMDb (otomatik)
     # ================================
-    def set_tmdb_key(self):
-        """Kullanıcıdan TMDb API anahtarı al ve kaydet."""
-        key = simpledialog.askstring(
-            "TMDb API Anahtarı",
-            """Afişleri otomatik getirmek için TMDb API anahtarınızı girin.
-
-• Ücretsiz anahtar: themoviedb.org/settings/api
-• Boş bırakırsanız afiş indirme kapalı kalır.""",
-        )
-        if key is None:
-            return
-        self.settings["tmdb_api_key"] = key.strip()
-        save_settings(self.settings)
-        self._set_info("✅ TMDb anahtarı kaydedildi.", "success")
     
-        self.update_poster_from_selection()
-
     def _tmdb_key(self) -> str:
-        return (self.settings.get("tmdb_api_key") or "").strip()
+        return ((self.settings.get("tmdb_api_key") or "").strip() or TMDB_API_KEY)
 
-    def _poster_cache_path(self, movie: str) -> str:
-        safe = re.sub(r"[^a-z0-9_\-]+", "_", normalize_movie(movie))
-        safe = re.sub(r"_+", "_", safe).strip("_")
-        return os.path.join(POSTERS_DIR, f"{safe}.jpg")
+    
+    def _poster_db_init(self):
+        try:
+            with sqlite3.connect(POSTER_DB_FILE, timeout=30) as con:
+                con.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS posters (
+                        movie_key TEXT PRIMARY KEY,
+                        img BLOB NOT NULL,
+                        updated_at INTEGER NOT NULL
+                    )
+                    """
+                )
+                con.commit()
+        except Exception:
+            pass
+
+    def _poster_db_get(self, movie_key: str) -> bytes | None:
+        try:
+            with sqlite3.connect(POSTER_DB_FILE, timeout=30) as con:
+                cur = con.execute("SELECT img FROM posters WHERE movie_key = ?", (movie_key,))
+                row = cur.fetchone()
+                return row[0] if row else None
+        except Exception:
+            return None
+
+    def _poster_db_set(self, movie_key: str, img_bytes: bytes) -> None:
+        try:
+            ts = int(time.time())
+            with sqlite3.connect(POSTER_DB_FILE, timeout=30) as con:
+                con.execute(
+                    "INSERT OR REPLACE INTO posters (movie_key, img, updated_at) VALUES (?, ?, ?)",
+                    (movie_key, sqlite3.Binary(img_bytes), ts),
+                )
+                con.commit()
+        except Exception:
+            pass
 
     def _parse_title_year(self, movie: str):
         s = movie.strip()
@@ -2608,7 +2070,7 @@ class FilmSecApp(tb.Window):
         except Exception:
             return None
 
-    def _download_poster(self, movie: str) -> str | None:
+    def _download_poster_bytes(self, movie: str) -> bytes | None:
         key = self._tmdb_key()
         if not key:
             return None
@@ -2623,54 +2085,171 @@ class FilmSecApp(tb.Window):
             return None
 
         img_url = f"https://image.tmdb.org/t/p/w500{poster_path}"
-        out_path = self._poster_cache_path(movie)
 
         try:
             req = urllib.request.Request(img_url, headers={"User-Agent": "FilmSec/1.0"})
             with urllib.request.urlopen(req, timeout=15) as r:
-                img_bytes = r.read()
-            with open(out_path, "wb") as f:
-                f.write(img_bytes)
-            return out_path
+                return r.read()
         except Exception:
             return None
 
-    def _get_poster_path(self, movie: str) -> str | None:
-        p = self._poster_cache_path(movie)
-        if os.path.exists(p) and os.path.getsize(p) > 0:
-            return p
-        return self._download_poster(movie)
+    def _get_poster_bytes(self, movie: str) -> bytes | None:
+        movie = (movie or "").strip()
+        if not movie:
+            return None
+
+        movie_key = get_movie_key(movie)
+
+        # RAM cache
+        b = self.poster_mem_cache.get(movie_key)
+        if b:
+            return b
+
+        # DB cache
+        b = self._poster_db_get(movie_key)
+        if b:
+            self.poster_mem_cache[movie_key] = b
+            return b
+
+        return None
+
+    def _ensure_poster_cached(self, movie: str) -> bool:
+        movie = (movie or "").strip()
+        if not movie:
+            return False
+
+        movie_key = get_movie_key(movie)
+        if self._get_poster_bytes(movie):
+            return True
+
+        b = self._download_poster_bytes(movie)
+        if not b:
+            return False
+
+        self._poster_db_set(movie_key, b)
+        self.poster_mem_cache[movie_key] = b
+        return True
+
+    def _start_poster_prefetch_for_current_list(self):
+        key = self._tmdb_key()
+        if not key:
+            return
+
+        movies = read_file(self.current_list_path())
+        watched = read_file(WATCHED_FILE)
+        movies = [m for m in movies if not contains_ci(watched, m)]
+
+        if not movies:
+            return
+
+        # yeni bir jenerasyon başlat
+        self.poster_prefetch_gen += 1
+        gen = self.poster_prefetch_gen
+
+        self.poster_prefetching = True
+        self.poster_img_label.configure(image="", text="⏳ Listeniz hazırlanıyor...\nLütfen bekleyin.")
+        self._set_info("⏳ Listeniz hazırlanıyor, lütfen bekleyin…", "info")
+
+        def worker():
+            for mv in movies:
+                # iptal edildi mi?
+                if gen != self.poster_prefetch_gen:
+                    break
+                try:
+                    # zaten varsa geç
+                    if self._get_poster_bytes(mv):
+                        continue
+                    self._ensure_poster_cached(mv)
+                    time.sleep(0.05)
+                except Exception:
+                    pass
+
+            def done():
+                if gen != self.poster_prefetch_gen:
+                    return
+                self.poster_prefetching = False
+                # Seçili film varsa afişi çiz
+                try:
+                    sel = self._get_selected("pool") or self._get_selected("watched")
+                    if sel:
+                        self.update_poster_preview(self._extract_original_movie_name(sel))
+                    else:
+                        self.poster_img_label.configure(image="", text="🎬 Bir film seç")
+                except Exception:
+                    pass
+                self._set_info("✅ Liste hazır.", "success")
+
+            try:
+                self.after(0, done)
+            except Exception:
+                pass
+
+        t = threading.Thread(target=worker, daemon=True)
+        t.start()
+
+    def _request_poster_for_movie_async(self, movie: str):
+        movie = (movie or "").strip()
+        if not movie:
+            return
+
+        movie_key = get_movie_key(movie)
+
+        def worker():
+            ok = self._ensure_poster_cached(movie)
+
+            def done():
+                # halen aynı film seçiliyken güncelle
+                cur = (self.poster_title_var.get() or "").strip()
+                if normalize_movie(cur) != normalize_movie(movie):
+                    return
+                if ok:
+                    self.update_poster_preview(movie)
+                else:
+                    self.poster_img_label.configure(image="", text="Afiş bulunamadı")
+
+            try:
+                self.after(0, done)
+            except Exception:
+                pass
+
+        threading.Thread(target=worker, daemon=True).start()
+
     def update_poster_preview(self, movie: str):
-        """Seçili film için afişi sağ panelde göster."""
         movie = (movie or "").strip()
         self.poster_title_var.set(movie)
 
         if not movie:
             self.poster_img_label.configure(image="", text="🎬 Bir film seç")
             self.poster_photo = None
+            self.current_poster_bytes = None
             return
 
-        
         if Image is None or ImageTk is None:
             self.poster_img_label.configure(image="", text="(Afiş için Pillow gerekli)\npython -m pip install pillow")
             self.poster_photo = None
+            self.current_poster_bytes = None
             return
 
         key = self._tmdb_key()
         if not key:
-            self.poster_img_label.configure(image="", text="TMDb anahtarı yok\n(🔑 TMDb Anahtarı butonu ile ekleyin)")
+            self.poster_img_label.configure(image="", text="TMDb anahtarı yok")
             self.poster_photo = None
+            self.current_poster_bytes = None
             return
 
-        poster_path = self._get_poster_path(movie)
-        if not poster_path:
-            self.poster_img_label.configure(image="", text="Afiş bulunamadı")
+        b = self._get_poster_bytes(movie)
+        if not b:
+            # list hazırlanırken tıklayınca UI donmasın
+            self.poster_img_label.configure(image="", text="⏳ Afiş hazırlanıyor...")
             self.poster_photo = None
+            self.current_poster_bytes = None
+            self._request_poster_for_movie_async(movie)
             return
+
+        self.current_poster_bytes = b
 
         try:
-            img = Image.open(poster_path)
-            
+            img = Image.open(io.BytesIO(b))
             target_w = 260
             w, h = img.size
             if w and h:
@@ -2678,13 +2257,92 @@ class FilmSecApp(tb.Window):
                 img = img.resize((target_w, target_h))
 
             photo = ImageTk.PhotoImage(img)
-            self.poster_photo = photo  
+            self.poster_photo = photo
             self.poster_img_label.configure(image=photo, text="")
         except Exception:
             self.poster_img_label.configure(image="", text="Afiş yüklenemedi")
             self.poster_photo = None
+            self.current_poster_bytes = None
 
-    
+    def _poster_hold_start(self, event):
+        b = getattr(self, "current_poster_bytes", None)
+        if not b:
+            return
+        if Image is None or ImageTk is None:
+            return
+
+        try:
+            img = Image.open(io.BytesIO(b))
+        except Exception:
+            return
+
+        # Ekrana sığacak şekilde büyüt
+        max_w, max_h = 520, 780
+        w, h = img.size
+        scale = min(max_w / max(w, 1), max_h / max(h, 1), 1.0)
+        nw, nh = int(w * scale), int(h * scale)
+        if nw > 0 and nh > 0:
+            img = img.resize((nw, nh))
+
+        if self.poster_preview_win is None or not self.poster_preview_win.winfo_exists():
+            win = tk.Toplevel(self)
+            win.wm_overrideredirect(True)
+            win.wm_attributes("-topmost", True)
+            try:
+                win.wm_attributes("-alpha", 0.96)
+            except Exception:
+                pass
+            self.poster_preview_win = win
+            self.poster_preview_label = tb.Label(win, padding=2)
+            self.poster_preview_label.pack()
+
+        self.poster_preview_imgtk = ImageTk.PhotoImage(img)
+        self.poster_preview_label.configure(image=self.poster_preview_imgtk)
+
+        self._poster_hold_move(event)
+
+    def _poster_hold_move(self, event):
+        if self.poster_preview_win is None or not self.poster_preview_win.winfo_exists():
+            return
+
+        win = self.poster_preview_win
+        try:
+            win.update_idletasks()
+        except Exception:
+            pass
+
+        sw = self.winfo_screenwidth()
+        sh = self.winfo_screenheight()
+
+        try:
+            ww = win.winfo_width() or win.winfo_reqwidth()
+            wh = win.winfo_height() or win.winfo_reqheight()
+        except Exception:
+            ww, wh = 420, 640
+
+        pad = 18
+        margin = 10
+
+        x = event.x_root + pad
+        y = event.y_root + pad
+
+        if x + ww + margin > sw:
+            x = event.x_root - ww - pad
+        if y + wh + margin > sh:
+            y = event.y_root - wh - pad
+
+        x = max(margin, min(x, sw - ww - margin))
+        y = max(margin, min(y, sh - wh - margin))
+
+        win.geometry(f"+{x}+{y}")
+
+    def _poster_hold_end(self, event=None):
+        if self.poster_preview_win is not None and self.poster_preview_win.winfo_exists():
+            self.poster_preview_win.destroy()
+        self.poster_preview_win = None
+        self.poster_preview_imgtk = None
+
+
     def open_data_dir(self):
         try:
             if os.name == "nt":
