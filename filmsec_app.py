@@ -18,7 +18,7 @@ from tkinter import messagebox, simpledialog, filedialog
 import ttkbootstrap as tb
 from ttkbootstrap.constants import *
 
-# Poster (afiş) için opsiyonel Pillow (JPEG yüklemek için gerekir)
+# Poster için opsiyonel Pillow 
 try:
     from PIL import Image, ImageTk
 except Exception:
@@ -410,18 +410,6 @@ def get_movie_key(movie: str) -> str:
     return normalize_movie(movie)
 
 
-# ================================
-# 1) Adnan'ın DVD listesi (TAM)
-# ================================
-
-# ================================
-# 2) Letterboxd Top 250 listesi
-# ================================
-
-# ================================
-# 3) Rastgele Film Önerileri
-# ================================
-
 
 # ================================
 # LİSTE METADATA (3 sabit liste)
@@ -533,7 +521,7 @@ class FilmSecApp(tb.Window):
         lists_area = tb.Frame(left)
         lists_area.pack(fill=BOTH, expand=True)
 
-        # ✅ Ayarlanabilir alan: Liste ↔ İzlenenler (sürüklenebilir ayırıcı)
+        # Ayarlanabilir alan: Liste ↔ İzlenenler (sürüklenebilir ayırıcı)
         self.splitter = tb.Panedwindow(lists_area, orient=HORIZONTAL)
         self.splitter.pack(fill=BOTH, expand=True)
 
@@ -702,7 +690,7 @@ class FilmSecApp(tb.Window):
         self.pool_list.bind("<Double-Button-1>", lambda e: self._on_double_click("pool"))
         self.watched_list.bind("<Double-Button-1>", lambda e: self._on_double_click("watched"))
 
-        # Sürükle-bırak eventleri
+        # Sürükle-bırak eventları
         self.pool_list.bind("<ButtonPress-1>", lambda e: self._on_drag_start(e, "pool"))
         self.pool_list.bind("<B1-Motion>", self._on_drag_motion)
         self.pool_list.bind("<ButtonRelease-1>", lambda e: self._on_drag_drop(e, "pool"))
@@ -727,14 +715,14 @@ class FilmSecApp(tb.Window):
         self._start_poster_prefetch_for_current_list()
 
 
-        # Başlangıçta ayırıcıyı makul bir oranla konumlandır (Liste biraz daha geniş)
+        # Başlangıçta ayırıcıyı konumlandır
         try:
             self.after(150, lambda: self.splitter.sashpos(0, int(self.winfo_width() * 0.5)))
         except Exception:
             pass
 
         
-        # İlk açılış popup'ı kaldırıldı: bunun yerine küçük bir ipucu göster
+        # İpucu
         if self.settings.get("first_launch", True):
             self.settings["first_launch"] = False
             save_settings(self.settings)
@@ -1041,7 +1029,6 @@ class FilmSecApp(tb.Window):
         Bu fonksiyon her durumda saf film adını döndürür.
         """
         clean = display_text
-        # Sıralama önemli değil; hangi ek önce geldiyse oradan kırp.
         for marker in (" ⭐", " 📅", " 📝"):
             if marker in clean:
                 clean = clean.split(marker)[0]
@@ -1082,7 +1069,7 @@ class FilmSecApp(tb.Window):
         rating_frame.pack(fill=X, pady=(0, 15))
 
         current_rating = self.ratings.get(movie_key, 0.0)
-        # Eski kayıtlarda 0.5 dışı değerler olabilir; burada 0.5'e sabitle
+       
         try:
             current_rating = round(float(current_rating) * 2) / 2
         except Exception:
@@ -1102,7 +1089,6 @@ class FilmSecApp(tb.Window):
 
         def update_rating_label(val):
             snapped = snap_to_half(val)
-            # ttk Scale bazen ara değerler üretir; burada 0.5'e kilitle
             if abs(rating_var.get() - snapped) > 1e-9:
                 rating_var.set(snapped)
             rating_label_var.set(f"{snapped:.1f}")
@@ -1148,7 +1134,7 @@ class FilmSecApp(tb.Window):
             # Daha net görünüm: dolu ★, yarım ⯨, boş ☆
             stars = "★" * full_stars
             if half_star:
-                stars += "⯨"  # yarım yıldız
+                stars += "⯨"  
             stars += "☆" * empty_stars
         
             stars_label.config(text=stars)
@@ -1532,7 +1518,6 @@ class FilmSecApp(tb.Window):
         watched = read_file(WATCHED_FILE)
 
         if which == "pool":
-            # Orijinal film adını çıkar
             original_movie = self._extract_original_movie_name(movie)
             
             if not contains_ci(watched, original_movie):
@@ -1553,7 +1538,7 @@ class FilmSecApp(tb.Window):
             self.refresh_lists()
             self._set_info(f"✅ '{original_movie}' izlenenlere taşındı ve tüm listelerden çıkarıldı.", "success")
         else:
-            # Orijinal film adını çıkar (⭐, 📅, 📝 ekleri olmadan)
+            # Orijinal film adını çıkar 
             original_movie = self._extract_original_movie_name(movie)
             movie_key = get_movie_key(original_movie)
 
@@ -1885,7 +1870,7 @@ class FilmSecApp(tb.Window):
             messagebox.showwarning("Uyarı", "Kaldırmak için listeden veya izlenenlerden bir film seç.")
             return
 
-        # Orijinal film adını çıkar (⭐, 📅, 📝 ikonları olmadan)
+        # Orijinal film adını çıkar 
         original_movie = self._extract_original_movie_name(movie)
 
         if which == "pool":
@@ -2142,7 +2127,7 @@ class FilmSecApp(tb.Window):
         if not movies:
             return
 
-        # yeni bir jenerasyon başlat
+        # yeni bir üretim başlat
         self.poster_prefetch_gen += 1
         gen = self.poster_prefetch_gen
 
@@ -2357,3 +2342,4 @@ class FilmSecApp(tb.Window):
 
 if __name__ == "__main__":
     FilmSecApp().mainloop()
+
